@@ -1,0 +1,41 @@
+[package]
+name = "global-lib"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.85"
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+authors = ["James Gober <me@jamesgober.com>"]
+description = "Process-wide values for Rust: set, define, read, edit, and remove globals by name or through typed statics, with lock-free reads. Zero dependencies."
+keywords = ["global", "static", "registry", "lock-free", "singleton"]
+categories = ["concurrency", "data-structures", "rust-patterns"]
+documentation = "https://docs.rs/global-lib"
+repository = "https://github.com/jamesgober/global-lib"
+homepage = "https://github.com/jamesgober/global-lib"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "global_lib"
+path = "src/lib.rs"
+
+# No runtime dependencies. Lock-free reads come from a crate-internal
+# hazard-pointer cell (src/hazard.rs, src/snapshot.rs), the same design
+# used by registry-io 1.1.
+[dependencies]
+
+[dev-dependencies]
+# Benchmarks (REPS: criterion for every performance-sensitive path).
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "global_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
