@@ -82,7 +82,7 @@
 #![deny(clippy::unreachable)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::missing_safety_doc)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::any::Any;
 use std::sync::Arc;
