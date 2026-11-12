@@ -80,7 +80,7 @@ Every value type must be `Send + Sync + 'static`. Names are `&str` and may be an
 use global_lib::Error;
 
 global_lib::set("port", 7000u16); // the type matters: `7000` alone is an i32
-global_lib::define("app_name", "HiveDB")?;
+global_lib::define("app_name", "MyApp")?;
 
 assert_eq!(global_lib::value::<u16>("port"), Some(7000));
 assert_eq!(global_lib::with::<u16, _>("port", |p| *p * 2), Some(14_000));
@@ -310,10 +310,10 @@ A value is found only under the exact type it was stored with. `u16` and `u32` a
 
 ```rust
 let g = global_lib::Globals::new();
-g.set("name", "HiveDB");                              // a &'static str
+g.set("name", "MyApp");                              // a &'static str
 
 assert_eq!(g.value::<String>("name"), None);          // not a String
-assert_eq!(g.value::<&str>("name"), Some("HiveDB"));
+assert_eq!(g.value::<&str>("name"), Some("MyApp"));
 
 let err = g.try_get::<String>("name").unwrap_err();
 assert_eq!(err.to_string(), r#"global "name" holds a &str, not a alloc::string::String"#);

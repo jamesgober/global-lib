@@ -49,7 +49,7 @@ type Map = HashMap<Box<str>, Slot>;
 ///
 /// let g = Globals::new();
 /// g.set("port", 7000u16);
-/// g.define("app_name", String::from("HiveDB"))?;
+/// g.define("app_name", String::from("MyApp"))?;
 ///
 /// assert_eq!(g.value::<u16>("port"), Some(7000));
 /// g.edit::<u16>("port", |p| *p += 1)?;
@@ -337,12 +337,12 @@ mod tests {
     #[test]
     fn test_define_is_set_once() {
         let g = Globals::new();
-        g.define("app", "HiveDB").unwrap();
+        g.define("app", "MyApp").unwrap();
         assert_eq!(
             g.define("app", "Other").unwrap_err(),
             Error::already_defined("app")
         );
-        assert_eq!(g.value::<&str>("app"), Some("HiveDB"));
+        assert_eq!(g.value::<&str>("app"), Some("MyApp"));
     }
 
     #[test]

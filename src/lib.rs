@@ -11,7 +11,7 @@
 //!
 //! ```
 //! global_lib::set("port", 7000u16);
-//! global_lib::define("app_name", "HiveDB")?;       // set-once
+//! global_lib::define("app_name", "MyApp")?;       // set-once
 //!
 //! let port: Option<u16> = global_lib::value("port");
 //! global_lib::edit::<u16>("port", |p| *p += 1)?;
