@@ -77,7 +77,7 @@ use global_lib::Global;
 
 // By name: any Send + Sync + 'static type, in one process-wide store.
 global_lib::set("port", 7000u16);
-global_lib::define("app_name", "HiveDB")?;           // set-once
+global_lib::define("app_name", "MyApp")?;           // set-once
 
 let port: u16 = global_lib::value("port").unwrap_or(8080);
 global_lib::edit::<u16>("port", |p| *p += 1)?;
