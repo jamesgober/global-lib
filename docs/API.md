@@ -18,7 +18,7 @@
 </div>
 <br>
 
-> **Status:** This reference tracks the public surface of `global-lib` **1.0.1**. Everything documented here is frozen for 1.x under the [stability contract](./STABILITY-1.0.md).
+> **Status:** This reference tracks the public surface of `global-lib` **1.0.2**. Everything documented here is frozen for 1.x under the [stability contract](./STABILITY-1.0.md).
 
 ## Table of Contents
 
@@ -79,7 +79,7 @@ Every value type must be `Send + Sync + 'static`. Names are `&str` and may be an
 ```rust
 use global_lib::Error;
 
-global_lib::set("port", 7000u16);
+global_lib::set("port", 7000u16); // the type matters: `7000` alone is an i32
 global_lib::define("app_name", "HiveDB")?;
 
 assert_eq!(global_lib::value::<u16>("port"), Some(7000));
@@ -387,7 +387,9 @@ A panic inside a `with` closure unwinds through the read, which releases its haz
 
 ### When values are dropped
 
-A replaced or removed value is dropped when the last reference to it goes away: the last snapshot that contains it, and every handle from `get`, `try_get`, `set`, or `take`. An old snapshot is freed as soon as no reader is using it, either by the writer that replaced it or by the last reader to finish with it. A value's `Drop` can therefore run on any thread that reads or writes the store, not only on the thread that replaced it.
+A replaced or removed value is dropped when the last reference to it goes away: the last snapshot that contains it, and every handle from `get`, `try_get`, `set`, or `take`. An old snapshot is freed as soon as no reader is using it, either by the writer that replaced it or by the last reader of that old snapshot when it finishes. A value's `Drop` can therefore run on a thread that writes the store or that was reading the replaced snapshot, not only on the thread that replaced it; a slow or panicking `Drop` shows up there.
+
+A `with` closure, or any read, that is still running when the value is replaced keeps the snapshot it reads alive until it returns: for a `Global<T>` the old value, for a store the old copy of the whole map. Reads on other threads are not affected: they read the new snapshot, lock-free and without allocating (before 1.0.2, every read made a lock attempt, a scan, and an allocation while such a closure ran). Keep closures that may block short, or clone what they need with `get`.
 
 Replaced, removed, and rejected values (the value a failed `define` was given, or the unused copy from an `edit` that had to retry) are all dropped outside the write lock, so their `Drop` implementations may use the store they were in.
 

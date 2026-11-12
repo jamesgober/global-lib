@@ -101,6 +101,9 @@ pub use store::{Globals, globals};
 
 /// Sets the process-wide global `name` to `value`, replacing any previous
 /// value of any type. See [`Globals::set`].
+///
+/// The stored type is exactly the type of `value`: write `7000u16`, not
+/// `7000`, which stores an `i32` that a `u16` read never finds.
 pub fn set<T: Any + Send + Sync>(name: &str, value: T) {
     globals().set(name, value);
 }

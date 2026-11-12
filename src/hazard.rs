@@ -27,7 +27,8 @@
 //! Protecting a pointer is one thread-local lookup, a scan for a free
 //! slot (almost always the first), one sequentially-consistent store, and
 //! one load to validate. Releasing is one release store. Scanning is
-//! `O(threads * SLOTS)` and only happens on the write path.
+//! `O(threads * SLOTS)` per retired snapshot, and only happens on the
+//! write path and when a reader of a replaced snapshot finishes.
 
 use core::cell::Cell;
 use core::ptr;
@@ -162,20 +163,20 @@ pub(crate) fn this_thread_protects(p: *const ()) -> bool {
         .unwrap_or(false)
 }
 
-/// Every pointer currently announced by any thread, in an unspecified
-/// order. Used by writers to decide which retired snapshots are safe to
-/// free.
-pub(crate) fn announced() -> Vec<*const ()> {
-    let mut out = Vec::new();
+/// Whether any thread currently announces `p`. Used under the writer lock
+/// to decide which retired snapshots are safe to free. Scans every slot
+/// of every record with `SeqCst` loads and allocates nothing.
+pub(crate) fn is_announced(p: *const ()) -> bool {
+    let mut found = false;
     for_each_record(|record| {
-        for slot in &record.slots {
-            let p = slot.load(Ordering::SeqCst);
-            if !p.is_null() {
-                out.push(p.cast_const());
-            }
+        if !found {
+            found = record
+                .slots
+                .iter()
+                .any(|slot| slot.load(Ordering::SeqCst).cast_const() == p);
         }
     });
-    out
+    found
 }
 
 fn for_each_record(mut f: impl FnMut(&'static Record)) {
@@ -245,7 +246,7 @@ mod tests {
         {
             let _pin = pin(target).expect("slot available");
             assert!(this_thread_protects(target));
-            assert!(announced().contains(&target));
+            assert!(is_announced(target));
         }
         assert!(!this_thread_protects(target));
     }
