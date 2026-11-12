@@ -12,7 +12,10 @@
 //! - **Writers** ([`SnapCell::update`], [`SnapCell::replace`]) serialize
 //!   on a mutex, install the new value, and *retire* the old one. A retired
 //!   value is freed as soon as no hazard announces it, either by the
-//!   writer immediately or by the last reader that was still using it.
+//!   writer immediately or by a reader that was still using it, when it
+//!   finishes. Readers of the current value never try: while one thread
+//!   holds a long read of a replaced value, every other read stays on the
+//!   lock-free, allocation-free path.
 //!
 //! Writers never wait for readers, so code that edits a global from
 //! inside a read of the same global cannot deadlock.
@@ -26,11 +29,14 @@ use crate::hazard;
 pub(crate) struct SnapCell<T> {
     /// The current value, as produced by `Arc::into_raw`. Never null.
     current: AtomicPtr<T>,
-    /// Number of retired values not yet freed. Read on every read so
-    /// the last reader of a retired value can free it promptly.
+    /// Number of retired values not yet freed. Read on every read so a
+    /// reader that was using a retired value can free it promptly.
     retired_len: AtomicUsize,
     /// Serializes writers and holds the retired values.
     writer: Mutex<Vec<Arc<T>>>,
+    /// How many times a reader tried to reclaim, for tests.
+    #[cfg(test)]
+    reclaim_attempts: AtomicUsize,
 }
 
 // SAFETY: `SnapCell<T>` hands out `&T` to any thread and moves `Arc<T>`
@@ -46,6 +52,8 @@ impl<T> SnapCell<T> {
             current: AtomicPtr::new(Arc::into_raw(Arc::new(value)).cast_mut()),
             retired_len: AtomicUsize::new(0),
             writer: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            reclaim_attempts: AtomicUsize::new(0),
         }
     }
 
@@ -64,7 +72,7 @@ impl<T> SnapCell<T> {
         // hazard (see its documentation), so the value stays alive and
         // unaliased-by-writers until `pin` is dropped below.
         let out = f(unsafe { &*p });
-        self.release(pin);
+        self.release(pin, p);
         out
     }
 
@@ -92,12 +100,24 @@ impl<T> SnapCell<T> {
         }
     }
 
-    /// Drops the hazard, then frees retired values if this was the last
-    /// reader holding one.
+    /// Drops the hazard on `p`, then, if `p` has been replaced since it
+    /// was read, frees the retired values no other reader still holds.
+    ///
+    /// Only a reader that held a retired value tries: its hazard was what
+    /// kept that value alive, so its release is what can make it free. A
+    /// reader of the current value has nothing to free, so it never takes
+    /// the lock or scans, whatever else is retired; without this check,
+    /// one long read of a replaced value made every other read on every
+    /// thread take a lock attempt, a hazard scan, and an allocation.
+    ///
+    /// The `current` load is only a hint (`Relaxed`): reclaiming is decided
+    /// under the writer lock by the `SeqCst` hazard scan, never by it.
     #[inline]
-    fn release(&self, pin: hazard::Pin) {
+    fn release(&self, pin: hazard::Pin, p: *mut T) {
         drop(pin);
-        if self.retired_len.load(Ordering::Relaxed) != 0 {
+        if self.retired_len.load(Ordering::Relaxed) != 0
+            && self.current.load(Ordering::Relaxed) != p
+        {
             self.try_reclaim();
         }
     }
@@ -156,10 +176,15 @@ impl<T> SnapCell<T> {
         let _unit = self.update(|_| Some((value, ())));
     }
 
-    /// Frees retired values no hazard announces. Called by readers after
-    /// they release their hazard; never blocks.
+    /// Frees retired values no hazard announces. Called by readers of a
+    /// replaced value after they release their hazard; never blocks. If a
+    /// writer holds the lock, that writer's own scan runs instead; a value
+    /// it still saw announced stays retired until the next write or the
+    /// next release of a replaced value.
     #[cold]
     fn try_reclaim(&self) {
+        #[cfg(test)]
+        let _attempts = self.reclaim_attempts.fetch_add(1, Ordering::Relaxed);
         let Ok(mut writer) = self.writer.try_lock() else {
             return;
         };
@@ -171,16 +196,16 @@ impl<T> SnapCell<T> {
 
     /// Moves every retired value that no thread announces out of the
     /// list, for the caller to drop after releasing the lock.
+    ///
+    /// The announcements are scanned in place, once per retired value
+    /// (the list is short: one entry per replaced value still being
+    /// read), so nothing is allocated unless something is freed.
     fn collect_unprotected(retired: &mut Vec<Arc<T>>) -> Vec<Arc<T>> {
-        if retired.is_empty() {
-            return Vec::new();
-        }
-        let announced = hazard::announced();
         let mut freed = Vec::new();
         let mut i = 0;
         while i < retired.len() {
             let p: *const () = Arc::as_ptr(&retired[i]).cast();
-            if announced.contains(&p) {
+            if hazard::is_announced(p) {
                 i += 1;
             } else {
                 freed.push(retired.swap_remove(i));
@@ -260,6 +285,42 @@ mod tests {
         });
         // The reader freed it on the way out.
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn readers_of_the_current_value_never_reclaim_while_an_old_one_is_held() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let cell = Arc::new(SnapCell::new(Some(DropFlag(Arc::clone(&dropped)))));
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let cell = Arc::clone(&cell);
+            std::thread::spawn(move || {
+                cell.read(|v| {
+                    assert!(v.is_some());
+                    held_tx.send(()).unwrap();
+                    go_rx.recv().unwrap();
+                    assert!(v.is_some(), "still alive while held");
+                });
+            })
+        };
+        held_rx.recv().unwrap();
+        cell.replace(None);
+        assert_eq!(cell.retired_len.load(Ordering::SeqCst), 1);
+        assert!(!dropped.load(Ordering::SeqCst));
+        let reads = if cfg!(miri) { 20 } else { 10_000 };
+        for _ in 0..reads {
+            assert!(cell.read(Option::is_none));
+        }
+        // None of those reads held the replaced value, so none of them
+        // took the lock or scanned.
+        assert_eq!(cell.reclaim_attempts.load(Ordering::SeqCst), 0);
+        go_tx.send(()).unwrap();
+        holder.join().unwrap();
+        // The holder freed the old value on its way out.
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(cell.retired_len.load(Ordering::SeqCst), 0);
+        assert_eq!(cell.reclaim_attempts.load(Ordering::SeqCst), 1);
     }
 
     #[test]

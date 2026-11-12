@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2026-11-12
+
+### Fixed
+
+- **Reads stay lock-free and allocation-free while a replaced value is
+  still being read.** When one thread held a read (a `with` closure, for
+  example) of a value that another thread then replaced, every other read
+  of that `Global`, or every read by name in the process for a store,
+  made a lock attempt, scanned every hazard record, and allocated, until
+  that closure returned: measured at about 80 ns and one allocation per
+  read instead of about 8 ns and none. Only a reader that was reading a
+  replaced value now tries to free it when it finishes, and the scan
+  checks the announcements in place without allocating. Measured on the
+  same machine, same job, three rounds each (typed `Global<u64>`, 1,000,000
+  reads while another thread holds a replaced value): 71.7 to 86.9 ns and
+  1,000,000 allocations before, 7.0 to 9.1 ns and none after. By name:
+  94 to 96 ns and one allocation per read before, 24 ns and none after,
+  the same as with nothing retired. Writers also no longer allocate a list
+  of every announcement on each write.
+
+### Documentation
+
+- A read that is still running when its value is replaced keeps the old
+  snapshot alive (for a store, the old copy of the map) until it returns,
+  and the reader that held it frees it, running its `Drop` there.
+- `set` stores exactly the type of its value: `set("port", 7000)` stores
+  an `i32`, which a `u16` read never finds. The docs now say to write
+  `7000u16` or use a `Global<u16>`.
+
+---
+
 ## [1.0.1] - 2026-10-26
 
 ### Fixed
@@ -65,6 +96,7 @@ Initial stable release. The public API is frozen for 1.x under
 - Unit, integration, and concurrency tests; criterion benchmarks; CI for
   Linux, macOS, and Windows on stable and MSRV 1.85.
 
-[Unreleased]: https://github.com/jamesgober/global-lib/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/jamesgober/global-lib/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/jamesgober/global-lib/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/jamesgober/global-lib/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jamesgober/global-lib/releases/tag/v1.0.0

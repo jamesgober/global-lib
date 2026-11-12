@@ -73,6 +73,11 @@ impl Globals {
     }
 
     /// Sets `name` to `value`, replacing any previous value of any type.
+    ///
+    /// The stored type is exactly the type of `value`, so write integer
+    /// literals with their type: `set("port", 7000)` stores an `i32`, and
+    /// a later `value::<u16>("port")` returns `None`. Write `7000u16`, or
+    /// use a [`Global<u16>`](crate::Global) for anything typed.
     pub fn set<T: Any + Send + Sync>(&self, name: &str, value: T) {
         let slot = Slot::new(value);
         let _unit = self.map.update(|map| {
